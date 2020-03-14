@@ -15,7 +15,9 @@ class ViewController: UIViewController {
     let port: UInt16 = 8080
     @IBOutlet weak var msgLabel: UILabel!
     
+    @IBOutlet weak var inputTextField: UITextField!
     var client: GCDAsyncSocket? = nil
+    var timer: Timer! = nil
     override func viewDidLoad() {
         super.viewDidLoad()
         
@@ -31,13 +33,12 @@ class ViewController: UIViewController {
     }
     
     @IBAction func sendMessage(_ sender: Any) {
-        let message = "hellow Swift"
-        
         /*
          tag: 消息标记
          withTimeout: 表示无限时长 ,永久不失效
          */
-        client?.write(message.data(using: .utf8), withTimeout: -1, tag: 123)
+//        client?.write(message.data(using: .utf8), withTimeout: -1, tag: 123)
+        sendData(inputTextField.text!.data(using: .utf8)! as NSData)
     }
 }
 
@@ -46,8 +47,8 @@ extension ViewController: GCDAsyncSocketDelegate {
     func socket(_ sock: GCDAsyncSocket, didConnectToHost host: String, port: UInt16) {
         print("连接上了服务端 服务器IP：\(host) 断开：\(port)")
         client?.readData(withTimeout: -1, tag: 123)
-        
-        // 这里可以增加定时器 定时发送心跳包
+        // 定时发送心跳包 每隔5秒发送一次
+        beginSendHeartData()
     }
     
     
@@ -71,9 +72,47 @@ extension ViewController: GCDAsyncSocketDelegate {
         //监听到断开连接后 需要清空代理和socket
         client?.delegate = nil
         client = nil
-        //这里可以增加重连的机制
     }
     
+}
+
+extension ViewController {
+    /// 发送数据 在数据包添加头部信息 为了解决TCP粘包问题
+    func sendData(_ data: NSData) {
+        let sendData: NSMutableData = NSMutableData()
+        
+        var dataLength = data.length
+        
+        let lengthData: Data = Data(bytes: &dataLength, count: dataLength)
+        
+        //使用4个字节存储长度信息 具体情况具体分析
+        let range = Range.init(NSRange(location: 0, length: 4))
+        let newLengthData = lengthData.subdata(in: range!)
+        
+        //然后拼接长度信息
+        sendData.append(newLengthData)
+        
+        //拼接要发送的数据
+        sendData.append(data as Data)
+        print(sendData)
+        //发送添加了长度信息的包
+        client?.write(sendData as Data, withTimeout: -1, tag: 123)
+    }
+    
+    /// 心跳包
+    func beginSendHeartData() {
+        timer = Timer(timeInterval: 30, target: self, selector: #selector(sendHeart), userInfo: nil, repeats: true)
+        RunLoop.main.add(timer!, forMode: .common)
+    }
+    
+    ///定时发送指令 这里瞎写的 和自己服务器协商吧
+    @objc func sendHeart() {
+        if timer != nil {
+            var heart = "heart"
+            let heartData = Data(bytes: &heart, count: heart.count)
+            client?.write(heartData, withTimeout: -1, tag: 0)
+        }
+    }
 }
 
 /*
@@ -81,11 +120,4 @@ extension ViewController: GCDAsyncSocketDelegate {
  使用的是YYNetwork
  或者使用mac命令终端输入 nc -lk 8080
  就可以互相发送数据监听接受了
- */
-
-/*
- 对于粘包的处理：
- 发送方将数据包加上包头和包尾
- 包头、包体以及包尾用字典形式包装成json字符串,接收方,通过解析获取json字符串中的包体
- 便可进行进一步处理
  */
